@@ -1,13 +1,28 @@
+
 import os
+import glob
 import dash
 from dash import dcc, html, dash_table
 import plotly.graph_objects as go
 import pandas as pd
 
-# Load Pink Morsel data from CSV (path relative to this script)
+# Load and combine the three daily sales CSV files
 _here = os.path.dirname(os.path.abspath(__file__))
-df = pd.read_csv(os.path.join(_here, "pink_morsel_data.csv"))
-df["revenue"] = df["price"] * df["sales"]
+_csv_files = sorted(glob.glob(os.path.join(_here, "daily_sales_data_*.csv")))
+df_raw = pd.concat([pd.read_csv(f) for f in _csv_files], ignore_index=True)
+
+# Filter to pink morsel only, clean price, compute revenue
+df_raw = df_raw[df_raw["product"].str.strip().str.lower() == "pink morsel"].copy()
+df_raw["price"] = df_raw["price"].str.replace("$", "", regex=False).astype(float)
+df_raw["revenue"] = df_raw["price"] * df_raw["quantity"]
+df_raw["date"] = pd.to_datetime(df_raw["date"])
+
+# Aggregate daily totals across all regions for charting
+df = (
+    df_raw.groupby("date", as_index=False)
+    .agg(price=("price", "mean"), sales=("quantity", "sum"), revenue=("revenue", "sum"))
+    .sort_values("date")
+)
 
 app = dash.Dash(__name__)
 
@@ -72,7 +87,7 @@ app.layout = html.Div(
                             figure=go.Figure(
                                 data=[
                                     go.Scatter(
-                                        x=df["year"], y=df["price"],
+                                        x=df["date"], y=df["price"],
                                         mode="lines+markers",
                                         name="Price ($)",
                                         line={"color": "#3b82d4", "width": 2},
@@ -81,7 +96,7 @@ app.layout = html.Div(
                                 ],
                                 layout=go.Layout(
                                     title="Price Over Time",
-                                    xaxis={"title": "Year", "tickmode": "linear"},
+                                    xaxis={"title": "Date"},
                                     yaxis={"title": "Price (USD)", "tickprefix": "$"},
                                     plot_bgcolor="#ffffff",
                                     paper_bgcolor="#ffffff",
@@ -101,14 +116,14 @@ app.layout = html.Div(
                             figure=go.Figure(
                                 data=[
                                     go.Bar(
-                                        x=df["year"], y=df["sales"],
+                                        x=df["date"], y=df["sales"],
                                         name="Sales (units)",
                                         marker_color="#7c5cd8",
                                     )
                                 ],
                                 layout=go.Layout(
                                     title="Sales Volume Over Time",
-                                    xaxis={"title": "Year", "tickmode": "linear"},
+                                    xaxis={"title": "Date"},
                                     yaxis={"title": "Units Sold"},
                                     plot_bgcolor="#ffffff",
                                     paper_bgcolor="#ffffff",
@@ -132,7 +147,7 @@ app.layout = html.Div(
                     figure=go.Figure(
                         data=[
                             go.Scatter(
-                                x=df["year"], y=df["revenue"],
+                                x=df["date"], y=df["revenue"],
                                 mode="lines+markers",
                                 fill="tozeroy",
                                 name="Revenue ($)",
@@ -142,8 +157,8 @@ app.layout = html.Div(
                             )
                         ],
                         layout=go.Layout(
-                            title="Revenue Over Time (Price × Sales)",
-                            xaxis={"title": "Year", "tickmode": "linear"},
+                            title="Revenue Over Time (Price × Quantity)",
+                            xaxis={"title": "Date"},
                             yaxis={"title": "Revenue (USD)", "tickprefix": "$"},
                             plot_bgcolor="#ffffff",
                             paper_bgcolor="#ffffff",
@@ -163,12 +178,13 @@ app.layout = html.Div(
                 html.H3("Raw Data", style={"color": "#1f2328", "marginTop": "0", "marginBottom": "12px"}),
                 dash_table.DataTable(
                     data=df.assign(
+                        date=df["date"].dt.strftime("%Y-%m-%d"),
                         price=df["price"].map("${:.2f}".format),
                         sales=df["sales"].map("{:,}".format),
                         revenue=df["revenue"].map("${:,.0f}".format),
                     ).to_dict("records"),
                     columns=[
-                        {"name": "Year", "id": "year"},
+                        {"name": "Date", "id": "date"},
                         {"name": "Price (USD)", "id": "price"},
                         {"name": "Sales (units)", "id": "sales"},
                         {"name": "Revenue (USD)", "id": "revenue"},
